@@ -136,6 +136,7 @@ jobs:
           bash scripts/patch-mechos-live-autologin-partitionmanager.sh scripts/build-mechos-archiso.sh
           python3 scripts/patch-mechos-reference-v5.py scripts/build-mechos-archiso.sh
           python3 scripts/patch-mechos-hardware-stable-22.6.py scripts/build-mechos-archiso.sh
+          python3 scripts/patch-mechos-offline-installer.py scripts/build-mechos-archiso.sh
           bash -n scripts/build-mechos-archiso.sh
           test "$(grep -c '^# MECHOS_HARDWARE_STABLE_22_6_INTEGRATION$' scripts/build-mechos-archiso.sh)" -eq 1
           grep -Fq 'bash /workspace/scripts/mechos-hardware-prepare-stable.sh final' scripts/build-mechos-archiso.sh
@@ -153,6 +154,7 @@ jobs:
           PY
           grep -Fq 'mechos-finalize-install-payload.sh final' scripts/build-mechos-archiso.sh
           grep -Fq 'mechos-hotfix13-stability-integration.sh' scripts/build-mechos-archiso.sh
+          grep -Fq 'mechos-offline-installer-integration.sh final' scripts/build-mechos-archiso.sh
 
       - name: Build physical hardware ISO
         env:

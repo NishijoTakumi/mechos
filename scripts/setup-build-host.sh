@@ -27,7 +27,11 @@ echo "MechOS ArchISO build host is ready."
 echo "Docker: $(docker --version)"
 echo "Free disk space: ${available_gib} GiB"
 
-if [[ "$available_gib" -lt 45 ]]; then
-  echo "Warning: the ISO build requires at least 45 GiB free; 70 GiB is recommended." >&2
+# The fully offline installer bundles the package closure; MECHOS_OFFLINE_REPO=0
+# builds the smaller online-install ISO.
+required_gib=80
+[[ "${MECHOS_OFFLINE_REPO:-1}" == "0" ]] && required_gib=45
+if [[ "$available_gib" -lt "$required_gib" ]]; then
+  echo "Warning: this ISO build requires at least ${required_gib} GiB free." >&2
   exit 1
 fi

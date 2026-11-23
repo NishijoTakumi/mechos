@@ -28,6 +28,11 @@ on:
       - 'scripts/mechos-update-center-recovery-v7.py'
       - 'scripts/validate-gui-button-wiring.py'
       - 'scripts/patch-mechos-reference-v5.py'
+      - 'scripts/patch-mechos-offline-installer.py'
+      - 'scripts/patch-mechos-offline-helper.py'
+      - 'scripts/mechos-offline-installer-integration.sh'
+      - 'scripts/mechos-offline-repo.py'
+      - 'scripts/validate-offline-installer.sh'
       - 'scripts/validate-new-build-final-gate.sh'
       - 'src/mechos_ui/fixed_canvas.py'
       - 'src/mechos_ui/installer_shell.py'
@@ -98,6 +103,7 @@ jobs:
           bash scripts/validate-live-installer-runtime-guard.sh
           bash scripts/validate-live-update-pacman-sandbox.sh
           bash scripts/validate-aur-helper.sh
+          bash scripts/validate-offline-installer.sh
           bash scripts/validate-vm-ui-runtime-guard.sh
           bash scripts/validate-vm-shortcut-launch.sh
           bash scripts/validate-installed-mechscope-launch.sh
@@ -147,6 +153,7 @@ jobs:
           python3 scripts/patch-mechos-rgb-quick-actions.py scripts/build-mechos-archiso.sh
           bash scripts/patch-mechos-live-autologin-partitionmanager.sh scripts/build-mechos-archiso.sh
           python3 scripts/patch-mechos-reference-v5.py scripts/build-mechos-archiso.sh
+          python3 scripts/patch-mechos-offline-installer.py scripts/build-mechos-archiso.sh
           bash -n scripts/build-mechos-archiso.sh
           test "$(grep -c '^# MECHOS_CURRENT_INTEGRATION_EARLY$' scripts/build-mechos-archiso.sh)" -eq 1
           test "$(grep -c '^# MECHOS_CURRENT_INTEGRATION_LATE$' scripts/build-mechos-archiso.sh)" -eq 1
@@ -196,6 +203,8 @@ jobs:
           grep -Fq 'mechos-build119-vm-mechscope-final.sh' scripts/build-mechos-archiso.sh
           grep -Fq 'mechos-build125-final-surfaces.sh' scripts/build-mechos-archiso.sh
           grep -Fq 'mechos-hotfix13-stability-integration.sh' scripts/build-mechos-archiso.sh
+          test "$(grep -c '^# MECHOS_OFFLINE_INSTALLER_INTEGRATION$' scripts/build-mechos-archiso.sh)" -eq 1
+          grep -Fq 'mechos-offline-installer-integration.sh final' scripts/build-mechos-archiso.sh
           grep -qxF 'partitionmanager' scripts/build-mechos-archiso.sh
           grep -Fq 'kdialog partitionmanager firefox' scripts/build-mechos-archiso.sh
           grep -Fq 'Session=plasma' scripts/build-mechos-archiso.sh

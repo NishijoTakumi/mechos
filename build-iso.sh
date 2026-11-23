@@ -15,10 +15,16 @@ docker info >/dev/null 2>&1 || {
   exit 1
 }
 
+# The fully offline installer bundles the whole package closure (several GiB,
+# held in the build tree, the ArchISO work copy and the SquashFS), so it needs
+# considerably more room. MECHOS_OFFLINE_REPO=0 builds the smaller online-install ISO.
+MECHOS_OFFLINE_REPO="${MECHOS_OFFLINE_REPO:-1}"
+required_gib=80
+[[ "$MECHOS_OFFLINE_REPO" == "0" ]] && required_gib=45
 available_kb="$(df -Pk "$BASE" | awk 'NR==2 {print $4}')"
-required_kb=$((45 * 1024 * 1024))
+required_kb=$((required_gib * 1024 * 1024))
 if [[ -n "$available_kb" && "$available_kb" -lt "$required_kb" ]]; then
-  echo "At least 45 GiB of free disk space is required for the ArchISO build." >&2
+  echo "At least ${required_gib} GiB of free disk space is required for this ArchISO build." >&2
   exit 1
 fi
 
@@ -28,6 +34,7 @@ docker run --rm --privileged \
   -e "MECHOS_HOST_UID=$(id -u)" \
   -e "MECHOS_HOST_GID=$(id -g)" \
   -e "MECHOS_HARDWARE_TARGET_VERSION=${MECHOS_HARDWARE_TARGET_VERSION:-}" \
+  -e "MECHOS_OFFLINE_REPO=${MECHOS_OFFLINE_REPO}" \
   -v "$BASE:/workspace" \
   -w /workspace \
   "$IMAGE" \
