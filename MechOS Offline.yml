@@ -1,0 +1,175 @@
+name: Build MechOS Offline Installer ISO
+
+# Fully offline Clean Install: the ISO bundles the whole package closure.
+# The build is heavy (tens of GiB of disk, a long SquashFS compression), so it
+# only runs on demand. The cheap source validation also runs on pushes and pull
+# requests that touch the offline-installer files.
+
+on:
+  workflow_dispatch:
+    inputs:
+      offline_repo:
+        description: 'Bundle the offline package repository (false builds the smaller online-install ISO)'
+        type: boolean
+        default: true
+  push:
+    paths:
+      - 'scripts/mechos-offline-repo.py'
+      - 'scripts/patch-mechos-offline-helper.py'
+      - 'scripts/patch-mechos-offline-installer.py'
+      - 'scripts/mechos-offline-installer-integration.sh'
+      - 'scripts/validate-offline-installer.sh'
+      - 'scripts/mechos-native-installer-integration.sh'
+      - 'scripts/mechos-live-installer-final-hardening.sh'
+      - '.github/workflows/build-mechos-offline.yml'
+  pull_request:
+    paths:
+      - 'scripts/mechos-offline-repo.py'
+      - 'scripts/patch-mechos-offline-helper.py'
+      - 'scripts/patch-mechos-offline-installer.py'
+      - 'scripts/mechos-offline-installer-integration.sh'
+      - 'scripts/validate-offline-installer.sh'
+      - 'scripts/mechos-native-installer-integration.sh'
+      - 'scripts/mechos-live-installer-final-hardening.sh'
+      - '.github/workflows/build-mechos-offline.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mechos-iso-build
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout MechOS
+        uses: actions/checkout@v4
+
+      - name: Validate offline installer source
+        run: |
+          set -euo pipefail
+          ./scripts/validate-project.sh
+          bash scripts/validate-native-installer.sh
+          bash scripts/validate-offline-installer.sh
+
+  build:
+    # Only on demand: the build needs ~80 GiB of disk and a long compression.
+    if: github.event_name == 'workflow_dispatch'
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 345
+    env:
+      MECHOS_OFFLINE_REPO: ${{ inputs.offline_repo && '1' || '0' }}
+
+    steps:
+      - name: Checkout MechOS
+        uses: actions/checkout@v4
+
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /usr/local/.ghcup || true
+          sudo rm -rf /opt/hostedtoolcache || true
+          sudo rm -rf /usr/local/share/boost || true
+          sudo rm -rf /opt/microsoft || true
+          sudo swapoff -a || true
+          sudo rm -f /mnt/swapfile || true
+          sudo apt-get clean || true
+          docker system prune -af --volumes || true
+          df -h
+
+      - name: Apply cumulative MechOS integration
+        run: |
+          set -euo pipefail
+          python3 scripts/patch-mechos-current.py scripts/build-mechos-archiso.sh
+          python3 scripts/patch-mechos-partition-screen.py scripts/build-mechos-archiso.sh
+          python3 scripts/patch-mechos-safe-mode-switching.py scripts/build-mechos-archiso.sh
+          python3 scripts/patch-mechos-default-wallpaper.py scripts/build-mechos-archiso.sh
+          python3 scripts/patch-mechos-substance-painter.py scripts/build-mechos-archiso.sh
+          python3 scripts/patch-mechos-creator-postinstall.py scripts/build-mechos-archiso.sh
+          python3 scripts/patch-mechos-rgb-quick-actions.py scripts/build-mechos-archiso.sh
+          bash scripts/patch-mechos-live-autologin-partitionmanager.sh scripts/build-mechos-archiso.sh
+          python3 scripts/patch-mechos-reference-v5.py scripts/build-mechos-archiso.sh
+          # Must be last: it lands right before mkarchiso, after every stage
+          # that can regenerate the installer helper.
+          python3 scripts/patch-mechos-offline-installer.py scripts/build-mechos-archiso.sh
+          bash -n scripts/build-mechos-archiso.sh
+          test "$(grep -c '^# MECHOS_CURRENT_INTEGRATION_LATE$' scripts/build-mechos-archiso.sh)" -eq 1
+          test "$(grep -c '^# MECHOS_OFFLINE_INSTALLER_INTEGRATION$' scripts/build-mechos-archiso.sh)" -eq 1
+          grep -Fq 'mechos-native-installer-integration.sh final' scripts/build-mechos-archiso.sh
+          grep -Fq 'mechos-hotfix13-stability-integration.sh' scripts/build-mechos-archiso.sh
+          grep -Fq 'mechos-finalize-install-payload.sh final' scripts/build-mechos-archiso.sh
+          python3 - <<'PY'
+          t = open('scripts/build-mechos-archiso.sh').read()
+          assert t.rindex('mechos-hotfix13-stability-integration.sh') < t.index('mechos-offline-installer-integration.sh final') < t.rindex('\nmkarchiso -v \\\n')
+          PY
+
+      - name: Build MechOS ISO
+        run: ./build-iso.sh
+
+      - name: Verify ISO and checksum
+        run: |
+          set -euo pipefail
+          ISO="$(find out -maxdepth 2 -type f -name '*.iso' -print -quit)"
+          test -n "$ISO"
+          test -s "$ISO"
+          test -s "$ISO.sha256"
+          ( cd "$(dirname "$ISO")" && sha256sum -c "$(basename "$ISO").sha256" )
+          ls -lh "$ISO" "$ISO.sha256"
+          echo "MECHOS_ISO=$ISO" >> "$GITHUB_ENV"
+
+      - name: Verify the ISO really ships the offline installer
+        if: env.MECHOS_OFFLINE_REPO == '1'
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y --no-install-recommends squashfs-tools
+          sudo mkdir -p /mnt/mechos-iso
+          sudo mount -o loop,ro "$MECHOS_ISO" /mnt/mechos-iso
+          SFS="$(find /mnt/mechos-iso -name airootfs.sfs -print -quit)"
+          test -n "$SFS"
+          # Read single files straight out of the SquashFS; nothing is extracted.
+          unsquashfs -cat "$SFS" usr/share/mechos/offline-repo/manifest.json > manifest.json
+          unsquashfs -cat "$SFS" usr/local/libexec/mechos-native-install-helper > helper.sh
+          sudo umount /mnt/mechos-iso
+          grep -Fq 'MECHOS_OFFLINE_INSTALL_V1' helper.sh
+          if grep -Fq 'MECHOS_NATIVE_INSTALL_PREFLIGHT_V1' helper.sh; then
+            echo 'The online mirror preflight survived into the ISO.' >&2; exit 1
+          fi
+          python3 - <<'PY'
+          import json
+          m = json.load(open('manifest.json'))
+          names = {p['name'] for repo in m['packages'].values() for p in repo}
+          for required in ('base', 'linux', 'linux-firmware', 'grub', 'networkmanager', 'plasma-meta', 'steam'):
+              assert required in names, f'offline repo lacks {required}'
+          print(f"offline repo: {m['package_count']} packages, {m['total_bytes'] / 2**30:.2f} GiB, built {m['built_utc']}")
+          PY
+
+      - name: Package ISO for upload
+        run: |
+          set -euo pipefail
+          mkdir -p upload
+          size="$(stat -c %s "$MECHOS_ISO")"
+          # Very large artifacts are fragile to upload and download, so split
+          # at ~9 GiB. Reassemble with: cat *.iso.part-* > MechOS-Arch-Creator-x86_64.iso
+          if [ "$size" -gt $((9 * 1024 * 1024 * 1024)) ]; then
+            split -b 4G -d --additional-suffix= "$MECHOS_ISO" upload/MechOS-Arch-Creator-x86_64.iso.part-
+            echo "ISO is $((size / 1024 / 1024 / 1024)) GiB; uploading as split parts."
+          else
+            cp "$MECHOS_ISO" upload/
+          fi
+          cp "$MECHOS_ISO.sha256" upload/
+          ls -lh upload
+
+      - name: Upload MechOS offline ISO artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MechOS-offline-x86_64
+          path: upload/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
