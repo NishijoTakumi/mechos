@@ -1,47 +1,37 @@
-name: Build MechOS Arch ISO
+name: Build MechOS Offline Installer ISO
+
+# Fully offline Clean Install: the ISO bundles the whole package closure.
+# The build is heavy (tens of GiB of disk, a long SquashFS compression), so it
+# only runs on demand. The cheap source validation also runs on pushes and pull
+# requests that touch the offline-installer files.
 
 on:
   workflow_dispatch:
+    inputs:
+      offline_repo:
+        description: 'Bundle the offline package repository (false builds the smaller online-install ISO)'
+        type: boolean
+        default: true
   push:
-    branches:
-      - main
     paths:
-      - 'scripts/mechos-new-build-final-gate.sh'
-      - 'scripts/mechos-new-build-final-hardening.sh'
-      - 'scripts/mechos-build113-live-boot-splash-fix.sh'
-      - 'scripts/mechos-build118-six-regression-final.sh'
-      - 'scripts/mechos-build119-vm-mechscope-final.sh'
-      - 'scripts/mechos-build125-final-surfaces.sh'
-      - 'scripts/mechos-hotfix13-stability-integration.sh'
-      - 'scripts/mechos-update-center-reference-v8.py'
-      - 'scripts/mechos-performance-center-v13.py'
-      - 'scripts/mechos-game-install-controller-v13.py'
-      - 'scripts/mechos-update-transaction-v13.sh'
-      - 'scripts/mechos-update-helper-v13-patch.py'
-      - 'scripts/mechos-hotfix13-mechscope-patch.py'
-      - 'scripts/validate-build125-final-surface-scope.sh'
-      - 'scripts/mechos-visual-surfaces-v9-patch.py'
-      - 'scripts/validate-visual-surfaces-v9.py'
-      - 'scripts/mechos-final-surface-owner-v8-patch.py'
-      - 'scripts/mechos-vm-mode-runtime-hotfix5.sh'
-      - 'scripts/mechos-mode-launch-hotfix5.sh'
-      - 'scripts/mechos-update-center-recovery-v7.py'
-      - 'scripts/validate-gui-button-wiring.py'
-      - 'scripts/patch-mechos-reference-v5.py'
-      - 'scripts/validate-new-build-final-gate.sh'
-      - 'src/mechos_ui/fixed_canvas.py'
-      - 'src/mechos_ui/installer_shell.py'
-      - 'src/mechos_ui/update_shell.py'
-      - 'src/mechos_ui/performance_shell.py'
-      - 'src/mechos_ui/recovery_shell.py'
-      - 'src/mechos_ui/quick_actions_shell.py'
-      - 'src/mechos_ui/creator_shell.py'
-      - 'src/mechos_ui/reference-v9.qss'
-      - 'src/mechscope/mechscope_shell.py'
-      - 'overlay/rootfs/etc/mechos/release'
-      - 'overlay/rootfs/etc/mechos/mechos.conf'
-      - 'overlay/rootfs/etc/system-release'
-      - '.github/workflows/build-mechos.yml'
+      - 'scripts/mechos-offline-repo.py'
+      - 'scripts/patch-mechos-offline-helper.py'
+      - 'scripts/patch-mechos-offline-installer.py'
+      - 'scripts/mechos-offline-installer-integration.sh'
+      - 'scripts/validate-offline-installer.sh'
+      - 'scripts/mechos-native-installer-integration.sh'
+      - 'scripts/mechos-live-installer-final-hardening.sh'
+      - '.github/workflows/build-mechos-offline.yml'
+  pull_request:
+    paths:
+      - 'scripts/mechos-offline-repo.py'
+      - 'scripts/patch-mechos-offline-helper.py'
+      - 'scripts/patch-mechos-offline-installer.py'
+      - 'scripts/mechos-offline-installer-integration.sh'
+      - 'scripts/validate-offline-installer.sh'
+      - 'scripts/mechos-native-installer-integration.sh'
+      - 'scripts/mechos-live-installer-final-hardening.sh'
+      - '.github/workflows/build-mechos-offline.yml'
 
 permissions:
   contents: read
@@ -51,9 +41,28 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  validate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 15
+    steps:
+      - name: Checkout MechOS
+        uses: actions/checkout@v4
+
+      - name: Validate offline installer source
+        run: |
+          set -euo pipefail
+          ./scripts/validate-project.sh
+          bash scripts/validate-native-installer.sh
+          bash scripts/validate-offline-installer.sh
+
+  build:
+    # Only on demand: the build needs ~80 GiB of disk and a long compression.
+    if: github.event_name == 'workflow_dispatch'
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 345
+    env:
+      MECHOS_OFFLINE_REPO: ${{ inputs.offline_repo && '1' || '0' }}
 
     steps:
       - name: Checkout MechOS
@@ -66,74 +75,13 @@ jobs:
           sudo rm -rf /usr/share/dotnet || true
           sudo rm -rf /usr/local/.ghcup || true
           sudo rm -rf /opt/hostedtoolcache || true
+          sudo rm -rf /usr/local/share/boost || true
+          sudo rm -rf /opt/microsoft || true
+          sudo swapoff -a || true
+          sudo rm -f /mnt/swapfile || true
+          sudo apt-get clean || true
           docker system prune -af --volumes || true
           df -h
-
-      - name: Validate MechOS source
-        run: |
-          ./scripts/validate-project.sh
-          python3 scripts/validate-gui-button-wiring.py
-          python3 scripts/validate-vm-lifecycle-workflow.py
-          python3 -m py_compile scripts/vm_lifecycle_runner.py
-          python3 scripts/validate-visual-surfaces-v9.py
-          bash scripts/validate-gamescope-universal.sh
-          bash scripts/validate-native-installer.sh
-          bash scripts/validate-reference-ui.sh
-          bash scripts/validate-reference-stores-v3.sh
-          bash scripts/validate-reference-surfaces-v4.sh
-          bash scripts/validate-radarai-performance-integration.sh
-          bash scripts/validate-creator-mode-launch.sh
-          bash scripts/validate-reference-v5.sh
-          bash scripts/validate-mechscope-exact-reference.sh
-          bash scripts/validate-native-ui-shell.sh
-          bash scripts/validate-auto-optimization.sh
-          bash scripts/validate-source-owned-system-ui.sh
-          bash scripts/validate-live-installer-owner.sh
-          bash scripts/validate-installer-reference-runtime.sh
-          bash scripts/validate-installer-auto-reboot.sh
-          bash scripts/validate-update-center-v1.sh
-          bash scripts/validate-update-center-v2.sh
-          bash scripts/validate-reference-splash.sh
-          bash scripts/validate-plymouth-native-final.sh
-          bash scripts/validate-live-installer-runtime-guard.sh
-          bash scripts/validate-live-update-pacman-sandbox.sh
-          bash scripts/validate-aur-helper.sh
-          bash scripts/validate-vm-ui-runtime-guard.sh
-          bash scripts/validate-vm-shortcut-launch.sh
-          bash scripts/validate-installed-mechscope-launch.sh
-          bash scripts/validate-vm-mode-runtime-final.sh
-          bash scripts/validate-firstboot-vm-runtime.sh
-          bash scripts/validate-new-build-final-gate.sh
-          bash scripts/validate-build125-final-surface-scope.sh
-          bash -n scripts/mechos-build113-live-boot-splash-fix.sh
-          grep -Fq 'PACKAGES="/workspace/archlive/packages.x86_64"' scripts/mechos-build113-live-boot-splash-fix.sh
-          grep -Fq "grep -qx 'plasma-meta' \"\$PACKAGES\"" scripts/mechos-build113-live-boot-splash-fix.sh
-          grep -Fq 'pacman -Si plasma-workspace' scripts/mechos-build113-live-boot-splash-fix.sh
-          if grep -Fq 'if [ ! -f "$ROOT/usr/share/wayland-sessions/plasma.desktop"' scripts/mechos-build113-live-boot-splash-fix.sh; then
-            echo 'Build 113 must not inspect package-owned Plasma session files before mkarchiso installs packages.' >&2
-            exit 1
-          fi
-          bash -n scripts/mechos-build118-six-regression-final.sh
-          bash -n scripts/mechos-build119-vm-mechscope-final.sh
-          bash -n scripts/mechos-vm-mode-runtime-hotfix5.sh
-          bash -n scripts/mechos-mode-launch-hotfix5.sh
-          grep -Fq 'MECHOS_HOTFIX5_VM_DIRECT_ROUTER_V1' scripts/mechos-mode-launch-hotfix5.sh
-          grep -Fq '/usr/local/bin/mechscope.real' scripts/mechos-vm-mode-runtime-hotfix5.sh
-          grep -Fq 'oobe-complete' scripts/mechos-vm-mode-runtime-hotfix5.sh
-          bash -n scripts/mechos-hotfix13-stability-integration.sh
-          bash -n scripts/mechos-update-transaction-v13.sh
-          python3 -m py_compile \
-            scripts/mechos-update-center-reference-v8.py \
-            scripts/mechos-performance-center-v13.py \
-            scripts/mechos-game-install-controller-v13.py \
-            scripts/mechos-update-helper-v13-patch.py \
-            scripts/mechos-hotfix13-mechscope-patch.py \
-            src/mechos_ui/fixed_canvas.py \
-            src/mechos_ui/update_shell.py \
-            src/mechos_ui/performance_shell.py
-          grep -Fq 'MECHOS_HOTFIX13_STABILITY_INTEGRATION_V2' scripts/mechos-hotfix13-stability-integration.sh
-          grep -Fq 'MECHOS_UPDATE_TRANSACTION_V13' scripts/mechos-update-transaction-v13.sh
-          grep -Fq 'MECHOS_PERFORMANCE_CENTER_V13' scripts/mechos-performance-center-v13.py
 
       - name: Apply cumulative MechOS integration
         run: |
@@ -147,58 +95,19 @@ jobs:
           python3 scripts/patch-mechos-rgb-quick-actions.py scripts/build-mechos-archiso.sh
           bash scripts/patch-mechos-live-autologin-partitionmanager.sh scripts/build-mechos-archiso.sh
           python3 scripts/patch-mechos-reference-v5.py scripts/build-mechos-archiso.sh
+          # Must be last: it lands right before mkarchiso, after every stage
+          # that can regenerate the installer helper.
+          python3 scripts/patch-mechos-offline-installer.py scripts/build-mechos-archiso.sh
           bash -n scripts/build-mechos-archiso.sh
-          test "$(grep -c '^# MECHOS_CURRENT_INTEGRATION_EARLY$' scripts/build-mechos-archiso.sh)" -eq 1
           test "$(grep -c '^# MECHOS_CURRENT_INTEGRATION_LATE$' scripts/build-mechos-archiso.sh)" -eq 1
-          test "$(grep -c '^# MECHOS_PARTITION_SCREEN_INTEGRATION$' scripts/build-mechos-archiso.sh)" -eq 1
-          test "$(grep -c '^# MECHOS_SAFE_MODE_SWITCHING_INTEGRATION$' scripts/build-mechos-archiso.sh)" -eq 1
-          test "$(grep -c '^# MECHOS_DEFAULT_WALLPAPER_INTEGRATION$' scripts/build-mechos-archiso.sh)" -eq 1
-          test "$(grep -c '^# MECHOS_SUBSTANCE_PAINTER_INTEGRATION$' scripts/build-mechos-archiso.sh)" -eq 1
-          test "$(grep -c '^# MECHOS_CREATOR_POSTINSTALL_INTEGRATION$' scripts/build-mechos-archiso.sh)" -eq 1
-          test "$(grep -c '^# MECHOS_RGB_QUICK_ACTIONS_INTEGRATION$' scripts/build-mechos-archiso.sh)" -eq 1
-          test "$(grep -c '^# MECHOS_REFERENCE_UI_V5_FINAL$' scripts/build-mechos-archiso.sh)" -eq 1
-          grep -Fq 'mechos-gamescope-amd-compat-integration.sh final' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-reference-ui-integration.sh final' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-reference-stores-v3-integration.sh final' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-radarai-performance-integration.sh final' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-reference-surfaces-v4-integration.sh final' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-reference-v5-integration.sh final' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-reference-v5-store-layout.sh' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-reference-v5-mechscope-layout.sh' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-reference-v5-mechscope-exact-layout.sh' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-reference-v5-creator-layout.sh' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-reference-v5-controls-layout.sh' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-reference-v5-controls-compat.sh' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-aur-helper-integration.sh' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-reference-v5-installer-layout.sh' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-live-update-pacman-sandbox-hotfix.sh' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-live-installer-runtime-guard.sh' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-vm-ui-runtime-guard.sh' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-vm-shortcut-launch-hotfix.sh' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-native-ui-shell-integration.sh' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-auto-optimization-hotfix.sh' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-source-owned-system-ui.sh' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-update-center-v1-integration.sh' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-update-center-v1-runtime-guard.sh' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-update-center-v2-integration.sh' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-installer-auto-reboot-hotfix.sh' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-installed-mechscope-launch-hotfix.sh' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-vm-mode-runtime-final.sh' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-firstboot-session-authority.sh' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-vm-app-launch-final.sh' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-reference-splash-integration.sh' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-plymouth-boot-final.sh' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-finalize-install-payload.sh final' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-new-build-final-hardening.sh' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-new-build-final-gate.sh' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-build113-live-boot-splash-fix.sh' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-build118-six-regression-final.sh' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-build119-vm-mechscope-final.sh' scripts/build-mechos-archiso.sh
-          grep -Fq 'mechos-build125-final-surfaces.sh' scripts/build-mechos-archiso.sh
+          test "$(grep -c '^# MECHOS_OFFLINE_INSTALLER_INTEGRATION$' scripts/build-mechos-archiso.sh)" -eq 1
+          grep -Fq 'mechos-native-installer-integration.sh final' scripts/build-mechos-archiso.sh
           grep -Fq 'mechos-hotfix13-stability-integration.sh' scripts/build-mechos-archiso.sh
-          grep -qxF 'partitionmanager' scripts/build-mechos-archiso.sh
-          grep -Fq 'kdialog partitionmanager firefox' scripts/build-mechos-archiso.sh
-          grep -Fq 'Session=plasma' scripts/build-mechos-archiso.sh
+          grep -Fq 'mechos-finalize-install-payload.sh final' scripts/build-mechos-archiso.sh
+          python3 - <<'PY'
+          t = open('scripts/build-mechos-archiso.sh').read()
+          assert t.rindex('mechos-hotfix13-stability-integration.sh') < t.index('mechos-offline-installer-integration.sh final') < t.rindex('\nmkarchiso -v \\\n')
+          PY
 
       - name: Build MechOS ISO
         run: ./build-iso.sh
@@ -210,17 +119,57 @@ jobs:
           test -n "$ISO"
           test -s "$ISO"
           test -s "$ISO.sha256"
-          cd "$(dirname "$ISO")"
-          sha256sum -c "$(basename "$ISO").sha256"
-          ls -lh "$(basename "$ISO")" "$(basename "$ISO").sha256"
+          ( cd "$(dirname "$ISO")" && sha256sum -c "$(basename "$ISO").sha256" )
+          ls -lh "$ISO" "$ISO.sha256"
+          echo "MECHOS_ISO=$ISO" >> "$GITHUB_ENV"
 
-      - name: Upload MechOS ISO artifact
+      - name: Verify the ISO really ships the offline installer
+        if: env.MECHOS_OFFLINE_REPO == '1'
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y --no-install-recommends squashfs-tools
+          sudo mkdir -p /mnt/mechos-iso
+          sudo mount -o loop,ro "$MECHOS_ISO" /mnt/mechos-iso
+          SFS="$(find /mnt/mechos-iso -name airootfs.sfs -print -quit)"
+          test -n "$SFS"
+          # Read single files straight out of the SquashFS; nothing is extracted.
+          unsquashfs -cat "$SFS" usr/share/mechos/offline-repo/manifest.json > manifest.json
+          unsquashfs -cat "$SFS" usr/local/libexec/mechos-native-install-helper > helper.sh
+          sudo umount /mnt/mechos-iso
+          grep -Fq 'MECHOS_OFFLINE_INSTALL_V1' helper.sh
+          if grep -Fq 'MECHOS_NATIVE_INSTALL_PREFLIGHT_V1' helper.sh; then
+            echo 'The online mirror preflight survived into the ISO.' >&2; exit 1
+          fi
+          python3 - <<'PY'
+          import json
+          m = json.load(open('manifest.json'))
+          names = {p['name'] for repo in m['packages'].values() for p in repo}
+          for required in ('base', 'linux', 'linux-firmware', 'grub', 'networkmanager', 'plasma-meta', 'steam'):
+              assert required in names, f'offline repo lacks {required}'
+          print(f"offline repo: {m['package_count']} packages, {m['total_bytes'] / 2**30:.2f} GiB, built {m['built_utc']}")
+          PY
+
+      - name: Package ISO for upload
+        run: |
+          set -euo pipefail
+          mkdir -p upload
+          size="$(stat -c %s "$MECHOS_ISO")"
+          # Very large artifacts are fragile to upload and download, so split
+          # at ~9 GiB. Reassemble with: cat *.iso.part-* > MechOS-Arch-Creator-x86_64.iso
+          if [ "$size" -gt $((9 * 1024 * 1024 * 1024)) ]; then
+            split -b 4G -d --additional-suffix= "$MECHOS_ISO" upload/MechOS-Arch-Creator-x86_64.iso.part-
+            echo "ISO is $((size / 1024 / 1024 / 1024)) GiB; uploading as split parts."
+          else
+            cp "$MECHOS_ISO" upload/
+          fi
+          cp "$MECHOS_ISO.sha256" upload/
+          ls -lh upload
+
+      - name: Upload MechOS offline ISO artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MechOS-v0.3.0-hotfix.13-x86_64
-          path: |
-            out/**/*.iso
-            out/**/*.iso.sha256
+          name: MechOS-offline-x86_64
+          path: upload/*
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
